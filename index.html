@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MapTrack</title>
+  <style>
+    body { font-family: Arial; background: #1a1a1a; color: white; padding: 20px; text-align: center; }
+    input, button, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 10px; font-size: 16px; box-sizing: border-box; }
+    input, select { background: #333; color: white; border: none; }
+    button { background: #00ffff; color: #000000; font-weight: bold; border: none; cursor: pointer; }
+    .status { margin: 20px 0; font-size: 18px; }
+    .preview { margin-top: 20px; padding: 10px; background: #2a2a2a; border-radius: 10px; display: none; }
+    .preview img { max-width: 100%; border-radius: 10px; }
+    .schedule-panel { background: #2a2a2a; padding: 15px; border-radius: 10px; margin: 15px 0; display: none; }
+    .auto-fetch-btn { background: #00aaff; color: white; margin-top: 0; }
+    .stop-btn { background: #ff4444; color: white; }
+    .flex-row { display: flex; gap: 10px; }
+    .flex-row button { margin: 0; }
+    .btn-group { display: flex; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+    .btn-group button { flex: 1; margin: 0; }
+    .save-btn { background: #4caf50; color: white; }
+    .clear-btn { background: #ff9800; color: white; }
+    .list-btn { background: #9c27b0; color: white; }
+    .config-list { background: #2a2a2a; border-radius: 10px; padding: 15px; margin-top: 15px; display: none; }
+    .config-item { background: #333; padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+    .config-item:hover { background: #444; }
+    .config-item button { width: auto; padding: 5px 10px; margin: 0; background: #ff4444; }
+    .delete-config { background: #ff4444; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; }
+    .stats { background: #2a2a2a; padding: 15px; border-radius: 10px; margin: 15px 0; display: none; }
+    .stat-value { font-size: 24px; font-weight: bold; color: #00ffff; }
+  </style>
+</head>
+<body>
+  <h2>MapTrack</h2>
+  
+  <input type="text" id="webhook" placeholder="Paste your Discord Webhook URL" value="">
+  <input type="text" id="placeid" placeholder="Place ID" value="">
+  
+  <button class="auto-fetch-btn" onclick="autoFetchGameInfo()">🔍 AUTO FETCH GAME INFO</button>
+  
+  <div id="gamePreview" class="preview"></div>
+  
+  <input type="text" id="gamename" placeholder="Full Game Name" value="">
+  <input type="text" id="created" placeholder="Created" value="">
+  <input type="text" id="lastupdated" placeholder="Last Updated" value="">
+  
+  <div id="statsPanel" class="stats">
+    <h4>📊 Game Statistics</h4>
+    <div>👥 Current Players: <span id="playerCount" class="stat-value">0</span></div>
+    <div>⭐ Favorites: <span id="favoriteCount" class="stat-value">0</span></div>
+    <div>👀 Visits: <span id="visitCount" class="stat-value">0</span></div>
+  </div>
+  
+  <div class="btn-group">
+    <button class="save-btn" onclick="saveCurrentConfig()">💾 SAVE CONFIG</button>
+    <button class="clear-btn" onclick="clearAllInputs()">🗑 CLEAR ALL</button>
+    <button class="list-btn" onclick="toggleConfigList()">📋 SHOW SAVED CONFIGS</button>
+  </div>
+  
+  <div id="configListPanel" class="config-list">
+    <h4>Saved Configurations</h4>
+    <div id="configList"></div>
+  </div>
+  
+  <button onclick="toggleSchedule()">⏰ TOGGLE SCHEDULE PANEL</button>
+  <div id="schedulePanel" class="schedule-panel">
+    <select id="scheduleInterval">
+      <option value="3600">Every 1 Hour</option>
+      <option value="7200">Every 2 Hours</option>
+      <option value="21600">Every 6 Hours</option>
+      <option value="43200">Every 12 Hours</option>
+      <option value="86400">Every 24 Hours</option>
+    </select>
+    <div class="flex-row">
+      <button onclick="startSchedule()" style="background: #00aa55; color: white;">▶ START SCHEDULE</button>
+      <button onclick="stopSchedule()" class="stop-btn">⏹ STOP SCHEDULE</button>
+    </div>
+    <div id="scheduleStatus" style="font-size: 14px; margin-top: 10px; color: #aaa;"></div>
+  </div>
+
+  <button onclick="sendNotification()">📨 SEND NOTIFICATION TO DISCORD</button>
+  <div id="status" class="status"></div>
+
+  <script>
+    let scheduleIntervalId = null;
+    let lastGameData = null;
+
+    function loadSavedData() {
+      const savedWebhook = localStorage.getItem('lastWebhook');
+      const savedPlaceId = localStorage.getItem('lastPlaceId');
+      const savedGameName = localStorage.getItem('lastGameName');
+      const savedCreated = localStorage.getItem('lastCreated');
+      const savedLastUpdated = localStorage.getItem('lastLastUpdated');
+      
+      if (savedWebhook) document.getElementById("webhook").value = savedWebhook;
+      if (savedPlaceId) document.getElementById("placeid").value = savedPlaceId;
+      if (savedGameName) document.getElementById("gamename").value = savedGameName;
+      if (savedCreated) document.getElementById("created").value = savedCreated;
+      if (savedLastUpdated) document.getElementById("lastupdated").value = savedLastUpdated;
+      
+      const savedLastGameData = localStorage.getItem('lastGameData');
+      if (savedLastGameData) {
+        lastGameData = JSON.parse(savedLastGameData);
+      }
+    }
+
+    function saveCurrentConfig() {
+      const config = {
+        webhook: document.getElementById("webhook").value,
+        placeId: document.getElementById("placeid").value,
+        gameName: document.getElementById("gamename").value,
+        created: document.getElementById("created").value,
+        lastUpdated: document.getElementById("lastupdated").value,
+        timestamp: new Date().toISOString()
+      };
+      
+      if (!config.placeId) {
+        alert("Please enter a Place ID first!");
+        return;
+      }
+      
+      let savedConfigs = JSON.parse(localStorage.getItem('savedConfigs') || '[]');
+      savedConfigs.push(config);
+      localStorage.setItem('savedConfigs', JSON.stringify(savedConfigs));
+      
+      updateConfigList();
+      document.getElementById("status").innerHTML = "✅ Configuration saved successfully!";
+      setTimeout(() => {
+        if (document.getElementById("status").innerHTML.includes("saved successfully")) {
+          document.getElementById("status").innerHTML = "";
+        }
+      }, 2000);
+    }
+
+    function clearAllInputs() {
+      if (confirm("Are you sure you want to clear all inputs?")) {
+        document.getElementById("webhook").value = "";
+        document.getElementById("placeid").value = "";
+        document.getElementById("gamename").value = "";
+        document.getElementById("created").value = "";
+        document.getElementById("lastupdated").value = "";
+        document.getElementById("gamePreview").style.display = "none";
+        document.getElementById("statsPanel").style.display = "none";
+        document.getElementById("status").innerHTML = "🗑 All inputs cleared!";
+        setTimeout(() => {
+          if (document.getElementById("status").innerHTML.includes("cleared")) {
+            document.getElementById("status").innerHTML = "";
+          }
+        }, 2000);
+      }
+    }
+
+    function toggleConfigList() {
+      const panel = document.getElementById("configListPanel");
+      if (panel.style.display === "none" || panel.style.display === "") {
+        updateConfigList();
+        panel.style.display = "block";
+      } else {
+        panel.style.display = "none";
+      }
+    }
+
+    function updateConfigList() {
+      const savedConfigs = JSON.parse(localStorage.getItem('savedConfigs') || '[]');
+      const configListDiv = document.getElementById("configList");
+      
+      if (savedConfigs.length === 0) {
+        configListDiv.innerHTML = "<p style='color: #aaa;'>No saved configurations yet.</p>";
+        return;
+      }
+      
+      configListDiv.innerHTML = "";
+      savedConfigs.forEach((config, index) => {
+        const configItem = document.createElement("div");
+        configItem.className = "config-item";
+        configItem.innerHTML = `
+          <div style="flex: 1; text-align: left;">
+            <strong>${config.gameName || "Unnamed Game"}</strong><br>
+            <small>Place ID: ${config.placeId} | ${new Date(config.timestamp).toLocaleDateString()}</small>
+          </div>
+          <div style="display: flex; gap: 5px;">
+            <button onclick="loadConfig(${index})" style="background: #00aaff; padding: 5px 10px;">Load</button>
+            <button onclick="deleteConfig(${index})" class="delete-config">Delete</button>
+          </div>
+        `;
+        configListDiv.appendChild(configItem);
+      });
+    }
+
+    function loadConfig(index) {
+      const savedConfigs = JSON.parse(localStorage.getItem('savedConfigs') || '[]');
+      if (savedConfigs[index]) {
+        const config = savedConfigs[index];
+        document.getElementById("webhook").value = config.webhook || "";
+        document.getElementById("placeid").value = config.placeId || "";
+        document.getElementById("gamename").value = config.gameName || "";
+        document.getElementById("created").value = config.created || "";
+        document.getElementById("lastupdated").value = config.lastUpdated || "";
+        
+        document.getElementById("status").innerHTML = "✅ Configuration loaded!";
+        setTimeout(() => {
+          if (document.getElementById("status").innerHTML.includes("loaded")) {
+            document.getElementById("status").innerHTML = "";
+          }
+        }, 2000);
+        
+        if (config.placeId) {
+          setTimeout(() => autoFetchGameInfo(), 500);
+        }
+      }
+    }
+
+    function deleteConfig(index) {
+      if (confirm("Delete this configuration?")) {
+        let savedConfigs = JSON.parse(localStorage.getItem('savedConfigs') || '[]');
+        savedConfigs.splice(index, 1);
+        localStorage.setItem('savedConfigs', JSON.stringify(savedConfigs));
+        updateConfigList();
+        document.getElementById("status").innerHTML = "🗑 Configuration deleted!";
+      }
+    }
+
+    async function autoFetchGameInfo() {
+      const placeId = document.getElementById("placeid").value.trim();
+      if (!placeId) {
+        alert("Please enter Place ID first!");
+        return;
+      }
+
+      document.getElementById("status").innerHTML = "⏳ Fetching game info...";
+      
+      try {
+        const response = await fetch(`https://games.roblox.com/v1/games?universeIds=${placeId}`);
+        const data = await response.json();
+        
+        if (data.data && data.data.length > 0) {
+          const game = data.data[0];
+          document.getElementById("gamename").value = game.name || "";
+          
+          const createdDate = game.created ? new Date(game.created).toLocaleDateString() : "";
+          const updatedDate = game.updated ? new Date(game.updated).toLocaleDateString() : "";
+          
+          document.getElementById("created").value = createdDate;
+          document.getElementById("lastupdated").value = updatedDate;
+          
+          await fetchGameStats(placeId);
+          showGamePreview(placeId, game.name);
+          
+          document.getElementById("status").innerHTML = "✅ Game info fetched successfully!";
+          
+          localStorage.setItem('lastPlaceId', placeId);
+          localStorage.setItem('lastGameName', game.name);
+          localStorage.setItem('lastCreated', createdDate);
+          localStorage.setItem('lastLastUpdated', updatedDate);
+          
+        } else {
+          document.getElementById("status").innerHTML = "❌ Game not found. Check Place ID.";
+        }
+      } catch (error) {
+        document.getElementById("status").innerHTML = "❌ Failed to fetch game info.";
+      }
+    }
+
+    async function fetchGameStats(placeId) {
+      try {
+        const response = await fetch(`https://games.roblox.com/v1/games?universeIds=${placeId}`);
+        const data = await response.json();
+        
+        if (data.data && data.data.length > 0) {
+          const game = data.data[0];
+          const playerCount = game.playing || 0;
+          const favoriteCount = game.favoritedCount || 0;
+          const visitCount = game.visits || 0;
+          
+          document.getElementById("playerCount").innerText = playerCount.toLocaleString();
+          document.getElementById("favoriteCount").innerText = favoriteCount.toLocaleString();
+          document.getElementById("visitCount").innerText = visitCount.toLocaleString();
+          
+          document.getElementById("statsPanel").style.display = "block";
+        }
+      } catch (error) {
+        console.error("Failed to fetch stats:", error);
+      }
+    }
+
+    function showGamePreview(placeId, gameName) {
+      const thumbnailUrl = `https://thumbnails.roblox.com/v1/assets?assetIds=${placeId}&size=420x420&format=Png&isCircular=false`;
+      const previewDiv = document.getElementById("gamePreview");
+      previewDiv.style.display = "block";
+      previewDiv.innerHTML = `
+        <h4>🎮 Game Preview</h4>
+        <img src="${thumbnailUrl}" alt="Game Thumbnail" onerror="this.src='https://via.placeholder.com/420x420?text=Invalid+Place+ID'">
+        <p><strong>${gameName}</strong></p>
+        <small>Place ID: ${placeId}</small>
+      `;
+    }
+
+    async function checkForUpdates() {
+      const placeId = document.getElementById("placeid").value.trim();
+      
+      if (!placeId) return false;
+      
+      try {
+        const response = await fetch(`https://games.roblox.com/v1/games?universeIds=${placeId}`);
+        const data = await response.json();
+        
+        if (data.data && data.data.length > 0) {
+          const game = data.data[0];
+          const newUpdatedDate = game.updated ? new Date(game.updated).toLocaleDateString() : "";
+          
+          if (lastGameData && lastGameData.lastUpdated !== newUpdatedDate) {
+            document.getElementById("lastupdated").value = newUpdatedDate;
+            document.getElementById("created").value = game.created ? new Date(game.created).toLocaleDateString() : "";
+            document.getElementById("gamename").value = game.name || "";
+            
+            await fetchGameStats(placeId);
+            
+            lastGameData = {
+              lastUpdated: newUpdatedDate,
+              gameName: game.name,
+              created: game.created
+            };
+            localStorage.setItem('lastGameData', JSON.stringify(lastGameData));
+            
+            return true;
+          }
+          
+          if (!lastGameData) {
+            lastGameData = {
+              lastUpdated: newUpdatedDate,
+              gameName: game.name,
+              created: game.created
+            };
+            localStorage.setItem('lastGameData', JSON.stringify(lastGameData));
+          }
+        }
+      } catch (error) {
+        console.error("Update check failed:", error);
+      }
+      
+      return false;
+    }
+
+    function toggleSchedule() {
+      const panel = document.getElementById("schedulePanel");
+      panel.style.display = panel.style.display === "none" ? "block" : "none";
+    }
+
+    function startSchedule() {
+      if (scheduleIntervalId) {
+        clearInterval(scheduleIntervalId);
+      }
+      
+      const intervalSeconds = parseInt(document.getElementById("scheduleInterval").value);
+      const intervalMs = intervalSeconds * 1000;
+      
+      scheduleIntervalId = setInterval(async () => {
+        const hasUpdate = await checkForUpdates();
+        if (hasUpdate) {
+          await sendNotificationSilent();
+          document.getElementById("status").innerHTML = "🔄 Update detected! Notification sent.";
+        } else {
+          document.getElementById("status").innerHTML = "⏰ Schedule check: No updates detected.";
+        }
+      }, intervalMs);
+      
+      const hours = intervalSeconds / 3600;
+      document.getElementById("scheduleStatus").innerHTML = `✅ Schedule active: Every ${hours} hour(s) (only sends on updates)`;
+      document.getElementById("status").innerHTML = `⏰ Schedule started! Checking every ${hours} hour(s)`;
+    }
+
+    function stopSchedule() {
+      if (scheduleIntervalId) {
+        clearInterval(scheduleIntervalId);
+        scheduleIntervalId = null;
+        document.getElementById("scheduleStatus").innerHTML = "⏹ Schedule stopped";
+        document.getElementById("status").innerHTML = "⏹ Schedule stopped";
+      }
+    }
+
+    async function sendNotificationSilent() {
+      const webhook = document.getElementById("webhook").value.trim();
+      const placeId = document.getElementById("placeid").value.trim();
+      const gameName = document.getElementById("gamename").value.trim();
+      const created = document.getElementById("created").value.trim();
+      const lastUpdated = document.getElementById("lastupdated").value.trim();
+      const playerCount = document.getElementById("playerCount").innerText;
+
+      if (!webhook || !placeId) return;
+
+      const finalGameName = gameName || "Roblox Game";
+      const thumbnailUrl = `https://thumbnails.roblox.com/v1/assets?assetIds=${placeId}&size=420x420&format=Png&isCircular=false`;
+
+      const fields = [
+        { name: "🎮 Game", value: `[${finalGameName}](https://www.roblox.com/games/${placeId}/)`, inline: false },
+        { name: "🆔 Place ID", value: placeId, inline: true },
+        { name: "👥 Current Players", value: playerCount || "N/A", inline: true }
+      ];
+
+      if (created) fields.push({ name: "📅 Created", value: created, inline: true });
+      if (lastUpdated) fields.push({ name: "🔄 Last Updated", value: lastUpdated, inline: true });
+
+      const payload = {
+        content: "",
+        embeds: [{
+          title: "GAME UPDATE DETECTED!",
+          description: "The game has been updated by the admin!",
+          color: 0x00ffff,
+          fields: fields,
+          image: { url: thumbnailUrl },
+          footer: {
+            text: "NOTIFICATION"
+          },
+          timestamp: new Date().toISOString()
+        }]
+      };
+
+      try {
+        await fetch(webhook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      } catch (error) {}
+    }
+
+    async function sendNotification() {
+      const webhook = document.getElementById("webhook").value.trim();
+      const placeId = document.getElementById("placeid").value.trim();
+      const gameName = document.getElementById("gamename").value.trim();
+      const created = document.getElementById("created").value.trim();
+      const lastUpdated = document.getElementById("lastupdated").value.trim();
+      const playerCount = document.getElementById("playerCount").innerText;
+
+      if (!webhook || !placeId) {
+        alert("Webhook URL and Place ID are required!");
+        return;
+      }
+
+      const finalGameName = gameName || "Roblox Game";
+      const thumbnailUrl = `https://thumbnails.roblox.com/v1/assets?assetIds=${placeId}&size=420x420&format=Png&isCircular=false`;
+
+      const fields = [
+        { name: "🎮 Game", value: `[${finalGameName}](https://www.roblox.com/games/${placeId}/)`, inline: false },
+        { name: "🆔 Place ID", value: placeId, inline: true },
+        { name: "👥 Current Players", value: playerCount || "N/A", inline: true }
+      ];
+
+      if (created) fields.push({ name: "📅 Created", value: created, inline: true });
+      if (lastUpdated) fields.push({ name: "🔄 Last Updated", value: lastUpdated, inline: true });
+
+      const payload = {
+        content: "",
+        embeds: [{
+          title: "GAME UPDATE DETECTED!",
+          description: "The game has been updated by the admin!",
+          color: 0x00ffff,
+          fields: fields,
+          image: { url: thumbnailUrl },
+          footer: {
+            text: "Notification"
+          },
+          timestamp: new Date().toISOString()
+        }]
+      };
+
+      fetch(webhook, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      .then(response => {
+        if (response.ok) {
+          document.getElementById("status").innerHTML = "✅ Notification sent successfully!";
+        } else {
+          document.getElementById("status").innerHTML = "❌ Failed to send, check webhook.";
+        }
+      })
+      .catch(() => {
+        document.getElementById("status").innerHTML = "❌ Failed to send, check webhook.";
+      });
+    }
+
+    loadSavedData();
+    
+    if (document.getElementById("placeid").value.trim()) {
+      setTimeout(() => autoFetchGameInfo(), 500);
+    }
+  </script>
+</body>
+</html>
